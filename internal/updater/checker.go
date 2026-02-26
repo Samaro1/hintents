@@ -179,7 +179,7 @@ func (c *Checker) compareVersions(current, latest string) (bool, error) {
 // displayNotification prints the update message to stderr
 func (c *Checker) displayNotification(latestVersion string) {
 	message := fmt.Sprintf(
-		"\n[INFO] Upgrade available: %s. Run 'go install github.com/dotandev/hintents/cmd/erst@latest' to update.\n\n", main
+		"\n[INFO] Upgrade available: %s. Run 'go install github.com/dotandev/hintents/cmd/erst@latest' to update.\n\n",
 		latestVersion,
 	)
 	fmt.Fprint(os.Stderr, message)

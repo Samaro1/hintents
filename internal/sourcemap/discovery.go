@@ -11,6 +11,8 @@ import (
 	"strings"
 )
 
+const wasmTargetPath = "target/wasm32-unknown-unknown/release"
+
 // DiscoverLocalSymbols scans for WASM files in the local target directory.
 // It returns a map of WASM hashes to their absolute file paths.
 func DiscoverLocalSymbols(projectRoot string) (map[string]string, error) {

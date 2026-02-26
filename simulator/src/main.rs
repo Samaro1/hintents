@@ -613,7 +613,6 @@ fn main() {
                                 };
 
                                 let wasm_instruction = extract_wasm_instruction(&topics, &data);
-                                let wasm_instruction = extract_wasm_instruction(&topics, &data);
                                 DiagnosticEvent {
                                     event_type,
                                     contract_id,
