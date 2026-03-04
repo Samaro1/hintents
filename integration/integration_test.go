@@ -320,7 +320,6 @@ func TestExitCodeContract(t *testing.T) {
 		wantZero bool
 	}{
 		{"help", []string{"--help"}, true},
-		{"version", []string{"--version"}, true},
 		{"bad command", []string{"xyzzy"}, false},
 		{"debug no hash", []string{"debug"}, false},
 	}

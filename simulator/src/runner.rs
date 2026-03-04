@@ -20,7 +20,7 @@ impl SimHost {
     /// Initialize a new Host with optional budget settings and resource calibration.
     pub fn new(
         budget_limits: Option<(u64, u64)>,
-        calibration: Option<simulator::types::ResourceCalibration>,
+        calibration: Option<crate::types::ResourceCalibration>,
         memory_limit: Option<u64>,
     ) -> Self {
         let budget = Budget::default();
@@ -53,12 +53,12 @@ impl SimHost {
 
     /// Set the contract ID for execution context.
     pub fn _set_contract_id(&mut self, id: Hash) {
-        self._contract_id = Some(id);
+        self.contract_id = Some(id);
     }
 
     /// Set the function name to invoke.
     pub fn _set_fn_name(&mut self, name: &str) -> Result<(), HostError> {
-        self._fn_name = Some(name.to_string());
+        self.fn_name = Some(name.to_string());
         Ok(())
     }
 
@@ -132,10 +132,11 @@ mod tests {
         // Test setting contract ID (dummy hash)
         let hash = Hash([0u8; 32]);
         host._set_contract_id(hash);
-        assert!(host._contract_id.is_some());
+        assert!(host.contract_id.is_some());
 
-        host._set_fn_name("add").expect("failed to set function name");
-        assert!(host._fn_name.is_some());
+        host._set_fn_name("add")
+            .expect("failed to set function name");
+        assert!(host.fn_name.is_some());
     }
 
     #[test]
@@ -150,7 +151,6 @@ mod tests {
 
         assert_eq!(res_a + res_b, 30);
     }
-}
 
     #[test]
     fn test_wipe_ledger_state_preserving_modules_without_cache() {

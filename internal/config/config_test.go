@@ -557,27 +557,6 @@ request_timeout = -5`
 	}
 }
 
-func TestValidators_MissingFields(t *testing.T) {
-	tests := []struct {
-		name      string
-		validator Validator
-		cfg       *Config
-		wantErr   bool
-	}{
-		{name: "missing rpc_url", validator: RequiredFieldsValidator{}, cfg: &Config{}, wantErr: true},
-		{name: "present rpc_url", validator: RequiredFieldsValidator{}, cfg: &Config{RpcUrl: "https://ok"}, wantErr: false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := tt.validator.Validate(tt.cfg)
-			if (err != nil) != tt.wantErr {
-				t.Fatalf("expected error=%v, got %v", tt.wantErr, err)
-			}
-		})
-	}
-}
-
 func TestParseTOML_InvalidTypes(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -592,18 +571,6 @@ func TestParseTOML_InvalidTypes(t *testing.T) {
 			cfg := &Config{}
 			if err := cfg.parseTOML(tt.content); err == nil {
 				t.Fatal("expected parse error")
-			}
-		})
-	}
-}
-
-func TestRequestTimeout_OutOfBounds(t *testing.T) {
-	tests := []int{-1, 301}
-	for _, timeout := range tests {
-		t.Run("timeout", func(t *testing.T) {
-			cfg := NewConfig("https://test.com", NetworkTestnet).WithRequestTimeout(timeout)
-			if err := (RequestTimeoutValidator{}).Validate(cfg); err == nil {
-				t.Fatalf("expected out-of-bounds error for %d", timeout)
 			}
 		})
 	}

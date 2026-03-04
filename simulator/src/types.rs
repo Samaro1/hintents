@@ -16,8 +16,11 @@ pub struct SimulationRequest {
     pub ledger_entries: Option<HashMap<String, String>>,
     pub contract_wasm: Option<String>,
     pub wasm_path: Option<String>, // Added for local loading
+    #[serde(default)]
+    pub no_cache: bool,
     pub enable_optimization_advisor: bool,
     pub profile: Option<bool>,
+    #[serde(default)]
     pub _timestamp: Option<i64>,
     pub resource_calibration: Option<ResourceCalibration>,
     /// RFC 3339 timestamp supplied by the caller.  Preserved for future use

@@ -4,8 +4,8 @@
 #![allow(warnings, clippy::all, clippy::pedantic, clippy::nursery)]
 
 mod config;
-mod gas_optimizer;
 mod debug_host_fn;
+mod gas_optimizer;
 mod git_detector;
 mod runner;
 mod source_map_cache;
@@ -25,6 +25,7 @@ use soroban_env_host::{
     xdr::{Operation, OperationBody},
     Host, HostError,
 };
+use std::collections::HashMap;
 use std::env;
 use std::fs;
 use std::io::{self, Read};
@@ -162,17 +163,20 @@ fn execute_operations(
         match &op.body {
             OperationBody::InvokeHostFunction(invoke_op) => {
                 logs.push("Executing InvokeHostFunction...".to_string());
-                
+
                 // Check for signature verification mock
-                if let Some(mock_result) = check_signature_verification_mocks(&request, &invoke_op.host_function) {
+                if let Some(mock_result) =
+                    check_signature_verification_mocks(&request, &invoke_op.host_function)
+                {
                     logs.push(format!("Mock signature verification: {:?}", mock_result));
                     if !mock_result {
-                        return Err(soroban_env_host::HostError::from(
-                            (soroban_env_host::xdr::ScErrorType::Context, soroban_env_host::xdr::ScErrorCode::InvalidInput)
-                        ));
+                        return Err(soroban_env_host::HostError::from((
+                            soroban_env_host::xdr::ScErrorType::Context,
+                            soroban_env_host::xdr::ScErrorCode::InvalidInput,
+                        )));
                     }
                 }
-                
+
                 let val = host.invoke_function(invoke_op.host_function.clone())?;
                 logs.push(format!("Result: {val:?}"));
                 check_memory_limit_or_panic(host, memory_limit);
@@ -200,6 +204,8 @@ fn scval_to_xdr_base64(val: &soroban_env_host::xdr::ScVal) -> String {
 /// Encode a contract ID to lowercase hex, matching Soroban CLI output format.
 fn contract_id_to_hex(id: &soroban_env_host::xdr::ContractId) -> String {
     hex::encode(&id.0 .0[..])
+}
+
 fn transaction_fee_stroops(envelope: &soroban_env_host::xdr::TransactionEnvelope) -> u64 {
     match envelope {
         soroban_env_host::xdr::TransactionEnvelope::Tx(tx_v1) => tx_v1.tx.fee as u64,
@@ -245,7 +251,7 @@ fn check_signature_verification_mocks(
 ) -> Option<bool> {
     // Check if signature verification mocking is enabled
     let mock_result = request.mock_signature_verification?;
-    
+
     // Check if this is a signature verification host function
     // Note: Current soroban-env-host version only has InvokeContract, CreateContract, and UploadContractWasm
     // Signature verification functions may be handled at a different level or in newer versions
@@ -254,7 +260,10 @@ fn check_signature_verification_mocks(
         _ => {
             // Check if the function name contains signature verification related terms
             let function_name = host_function.name();
-            if function_name.contains("Verify") || function_name.contains("Signature") || function_name.contains("Ed25519") {
+            if function_name.contains("Verify")
+                || function_name.contains("Signature")
+                || function_name.contains("Ed25519")
+            {
                 Some(mock_result)
             } else {
                 None
@@ -276,12 +285,16 @@ fn categorize_events(events: &soroban_env_host::events::Events) -> Vec<Categoriz
             .to_string();
 
             let contract_id = e.event.contract_id.as_ref().map(|id| format!("{id:?}"));
-            let topics = match &e.event.body {
-                soroban_env_host::xdr::ContractEventBody::V0(v0) => v0
-                    .topics
-                    .iter()
-                    .map(|t| format!("{t:?}"))
-                    .collect::<Vec<String>>(),
+            let (topics, data) = match &e.event.body {
+                soroban_env_host::xdr::ContractEventBody::V0(v0) => {
+                    let topics = v0
+                        .topics
+                        .iter()
+                        .map(|t| format!("{t:?}"))
+                        .collect::<Vec<String>>();
+                    let data = format!("{:?}", v0.data);
+                    (topics, data)
+                }
             };
 
             let wasm_instruction = extract_wasm_instruction(&topics, &data);
@@ -301,8 +314,6 @@ fn categorize_events(events: &soroban_env_host::events::Events) -> Vec<Categoriz
                     topics,
                     data,
                     wasm_instruction,
-                    // failed_call=true means the call that emitted this event
-                    // actually failed; so a successful call is the inverse.
                     in_successful_contract_call: !e.failed_call,
                 },
             }
@@ -330,7 +341,7 @@ fn main() {
         let err_msg = format!("Failed to read stdin: {e}");
         let res = SimulationResponse {
             status: "error".to_string(),
-//             error: Some(err_msg.clone()),
+            //             error: Some(err_msg.clone()),
             error: Some(format!("Failed to read stdin: {e}")),
             error_code: None,
             lcov_report: None,
@@ -447,7 +458,7 @@ fn main() {
                 if let Err(e) = vm::enforce_soroban_compatibility(&wasm_bytes) {
                     return send_error(format!("Strict VM enforcement failed: {}", e));
                 }
-                let mapper = SourceMapper::new_with_options(wasm_bytes, request.no_cache.unwrap_or(false));
+                let mapper = SourceMapper::new_with_options(wasm_bytes, request.no_cache);
                 if mapper.has_debug_symbols() {
                     eprintln!("Debug symbols found in WASM");
                     Some(mapper)
@@ -543,7 +554,13 @@ fn main() {
     // Wrap the operation execution in panic protection
     let mut coverage = CoverageTracker::default();
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        execute_operations(&host, operations, &request, request.memory_limit, &mut coverage)
+        execute_operations(
+            &host,
+            operations,
+            &request,
+            request.memory_limit,
+            &mut coverage,
+        )
     }));
 
     let budget = host.budget_cloned();
@@ -612,58 +629,60 @@ fn main() {
         lcov_report = Some(report);
     }
 
+    let mut diagnostic_events: Vec<DiagnosticEvent> = vec![];
+    let mut categorized_events: Vec<CategorizedEvent> = vec![];
+
     match result {
         Ok(Ok(exec_logs)) => {
-            let (events, diagnostic_events): (Vec<String>, Vec<DiagnosticEvent>) =
-                match host.get_events() {
-                    Ok(evs) => {
-                        let raw_events: Vec<String> =
-                            (evs.0).iter().map(|e| format!("{:?}", e)).collect();
-                        let diag_events: Vec<DiagnosticEvent> = (evs.0)
-                            .iter()
-                            .map(|event| {
-                                let event_type = match event.event.type_ {
-                                    soroban_env_host::xdr::ContractEventType::Contract => {
-                                        "contract".to_string()
-                                    }
-                                    soroban_env_host::xdr::ContractEventType::System => {
-                                        "system".to_string()
-                                    }
-                                    soroban_env_host::xdr::ContractEventType::Diagnostic => {
-                                        "diagnostic".to_string()
-                                    }
-                                };
-
-                                let contract_id =
-                                    event.event.contract_id.as_ref().map(contract_id_to_hex);
-
-                                let (topics, data) = match &event.event.body {
-                                    soroban_env_host::xdr::ContractEventBody::V0(v0) => {
-                                        let topics: Vec<String> =
-                                            v0.topics.iter().map(scval_to_xdr_base64).collect();
-                                        let data = scval_to_xdr_base64(&v0.data);
-                                        (topics, data)
-                                    }
-                                };
-
-                                let wasm_instruction = extract_wasm_instruction(&topics, &data);
-                                DiagnosticEvent {
-                                    event_type,
-                                    contract_id,
-                                    topics,
-                                    data,
-                                    in_successful_contract_call: !event.failed_call,
-                                    wasm_instruction,
+            let (events, diag_evs): (Vec<String>, Vec<DiagnosticEvent>) = match host.get_events() {
+                Ok(evs) => {
+                    let raw_events: Vec<String> =
+                        (evs.0).iter().map(|e| format!("{:?}", e)).collect();
+                    let diag_events: Vec<DiagnosticEvent> = (evs.0)
+                        .iter()
+                        .map(|event| {
+                            let event_type = match event.event.type_ {
+                                soroban_env_host::xdr::ContractEventType::Contract => {
+                                    "contract".to_string()
                                 }
-                            })
-                            .collect();
-                        (raw_events, diag_events)
-                    }
-                    Err(_) => (
-                        vec!["Failed to retrieve events".to_string()],
-                        Vec::<DiagnosticEvent>::new(),
-                    ),
-                };
+                                soroban_env_host::xdr::ContractEventType::System => {
+                                    "system".to_string()
+                                }
+                                soroban_env_host::xdr::ContractEventType::Diagnostic => {
+                                    "diagnostic".to_string()
+                                }
+                            };
+
+                            let contract_id =
+                                event.event.contract_id.as_ref().map(contract_id_to_hex);
+
+                            let (topics, data) = match &event.event.body {
+                                soroban_env_host::xdr::ContractEventBody::V0(v0) => {
+                                    let topics: Vec<String> =
+                                        v0.topics.iter().map(scval_to_xdr_base64).collect();
+                                    let data = scval_to_xdr_base64(&v0.data);
+                                    (topics, data)
+                                }
+                            };
+
+                            let wasm_instruction = extract_wasm_instruction(&topics, &data);
+                            DiagnosticEvent {
+                                event_type,
+                                contract_id,
+                                topics,
+                                data,
+                                in_successful_contract_call: !event.failed_call,
+                                wasm_instruction,
+                            }
+                        })
+                        .collect();
+                    (raw_events, diag_events)
+                }
+                Err(_) => (
+                    vec!["Failed to retrieve events".to_string()],
+                    Vec::<DiagnosticEvent>::new(),
+                ),
+            };
 
             let categorized_events = match host.get_events() {
                 Ok(evs) => categorize_events(&evs),
@@ -751,9 +770,7 @@ fn main() {
                 // mappable source location so callers can correlate failures.
                 source_location: source_mapper
                     .as_ref()
-                    .and_then(|m| m.map_wasm_offset_to_source(0))
-                    .and_then(|loc| serde_json::to_string(&loc).ok()),
-                wasm_offset: None,
+                    .and_then(|m| m.map_wasm_offset_to_source(0)),
                 linear_memory_dump: None,
             };
 
@@ -767,7 +784,7 @@ fn main() {
         Ok(Err(host_error)) => {
             // Host error during execution (e.g., contract trap, validation failure)
             let error_debug = format!("{:?}", host_error);
-          let error_msg = format!("{:?}", host_error);
+            let error_msg = format!("{:?}", host_error);
             let decoded_msg = decode_error(&error_debug);
             let wasm_trace = WasmStackTrace::from_host_error(&error_debug);
             let trace_display = wasm_trace.display();
@@ -852,11 +869,12 @@ fn main() {
             let error_msg = format!("{:?}", host_error);
             let wasm_offset = extract_wasm_offset(&error_msg);
 
-            let source_location = if let (Some(offset), Some(mapper)) = (wasm_offset, &source_mapper) {
-                mapper.map_wasm_offset_to_source(offset)
-            } else {
-                None
-            };
+            let source_location =
+                if let (Some(offset), Some(mapper)) = (wasm_offset, &source_mapper) {
+                    mapper.map_wasm_offset_to_source(offset)
+                } else {
+                    None
+                };
 
             let error_msg = format!("{:?}", host_error);
             let wasm_offset = extract_wasm_offset(&error_msg);
